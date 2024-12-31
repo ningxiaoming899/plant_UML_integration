@@ -1,0 +1,34 @@
+@startuml
+autonumber 1
+前端 -> 应用层actApi: 创建订单
+应用层actApi -> 交易核心tradeCore: 创建订单接口(商品编码、外部订单号等)
+交易核心tradeCore -> 交易核心tradeCore: 创建订单成功(生成一条订单记录，订单号等)
+note over 交易核心tradeCore
+lua脚本占用库存。
+string stockKey = {FLIGHT_TRADE_STOCK}_商品编码;
+String[] keys = { stockKey };
+String[] values = { stock };
+String stockRes = redisClientProxy.eval(LuaScriptConstants.STOCK_SUB_SCRIPT, keys, values);
+对应的执行脚本
+if (redis.call('HEXISTS', 'FLIGHT_TRADE_STOCK', KEYS[1]) == 1) then
+    local stock = tonumber(redis.call('HGET', 'FLIGHT_TRADE_STOCK', KEYS[1]));
+    local num = tonumber(ARGV[1]);
+    if (stock <= 0) then
+        return string.format('%s,%s', 'NO_STOCK', stock);
+    end ;
+    if (stock >= num) then
+        local res = redis.call('HINCRBY', 'FLIGHT_TRADE_STOCK', KEYS[1], 0 - num);
+        return string.format('%s,%s', 'OK', res);
+    end ;
+    return string.format('%s,%s', 'NOT_ENOUGH', stock);
+end ;
+return string.format('%s,%s', 'NO_INIT', 0);
+end note
+交易核心tradeCore --> 应用层actApi: 返回创建订单结果(订单号、应付金额、支付时效等)
+应用层actApi -> 应用层actApi: 创单成功(生成一条订单记录，记录交易订单号，流水号，支付时效等)
+应用层actApi --> 前端: 创建订单成功(返回订单号、支付超时时间)，前端拉起收银台
+支付系统 -> 交易核心tradeCore: 支付成功回调接口(订单号、支付流水号、支付金额、支付时间等)
+交易核心tradeCore -> 交易核心tradeCore: 支付成功回调接口(更新订单状态为已支付)
+交易核心tradeCore -> MQ集群: 发送支付成功MQ消息
+MQ集群 --> 应用层actApi: 监听订单状态变更消息,支付成功(更新订单状态为已支付)
+@enduml
